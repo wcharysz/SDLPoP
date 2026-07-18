@@ -191,8 +191,22 @@ elseif(APPLE)
         set_target_properties(prince PROPERTIES
                 INSTALL_RPATH "@executable_path/../Frameworks;${SDL2_FRAMEWORKS_DIR}"
                 BUILD_WITH_INSTALL_RPATH ON)
-    else()
+    elseif (DEFINED SDL2)
+        # SDL2 location given explicitly via -DSDL2=... (include/link dirs set above).
         target_link_libraries(prince SDL2main SDL2 SDL2_image m)
+    else()
+        # Discover a locally-installed SDL2 (MacPorts /opt/local, or Homebrew) via
+        # pkg-config. This is the correct path on macOS 10.x / High Sierra, where the
+        # prebuilt universal framework is missing symbols and MacPorts' SDL2 is used.
+        find_package(PkgConfig REQUIRED)
+        pkg_search_module(PC_SDL2 REQUIRED sdl2)
+        pkg_search_module(PC_SDL2IMAGE REQUIRED SDL2_image)
+        target_include_directories(prince PRIVATE
+                ${PC_SDL2_INCLUDE_DIRS} ${PC_SDL2IMAGE_INCLUDE_DIRS})
+        target_compile_options(prince PRIVATE
+                ${PC_SDL2_CFLAGS_OTHER} ${PC_SDL2IMAGE_CFLAGS_OTHER})
+        target_link_libraries(prince
+                ${PC_SDL2_LDFLAGS} ${PC_SDL2IMAGE_LDFLAGS} m)
     endif()
 elseif(PSP) # Linux, *BSD, etc.
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")

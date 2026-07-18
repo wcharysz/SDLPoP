@@ -488,66 +488,72 @@ Remove it with:
 
 ### macOS
 
-#### Recommended: a universal, self-contained app (`build-macos.sh`)
+Because modern and legacy macOS need different SDL2 builds, there are two paths. The
+`build-macos.sh` helper picks the right one automatically from the macOS you build on:
 
-This is the easiest way to get a `prince.app` that runs everywhere. It produces a
-**universal binary** (Apple Silicon *and* Intel) with the official SDL2 / SDL2_image
-frameworks bundled inside the `.app`, so nothing else needs to be installed on the
-machine that runs it — no Homebrew, no MacPorts.
+| You are on…                          | SDL2 source                         | Result                                             |
+| ------------------------------------ | ----------------------------------- | -------------------------------------------------- |
+| **macOS 11+** (Apple Silicon / Intel)| official universal frameworks       | universal, self-contained `.app` (runs on macOS 11+) |
+| **macOS 10.x** (e.g. High Sierra)    | MacPorts (or Homebrew) via pkg-config | native `.app` linked to the installed SDL2         |
+
+Why two paths? The prebuilt SDL2 framework from libsdl.org is compiled on a newer SDK
+and is **missing symbols on High Sierra (10.13)** — it won't run there. On old macOS we
+therefore link against MacPorts' SDL2 instead, which is built for that system.
+
+In every case you first need the Xcode command line tools: `xcode-select --install`.
+
+#### On Apple Silicon / modern Intel (macOS 11+)
 
     ./build-macos.sh
 
-The result is `build-macos/prince.app`. Open it with `open build-macos/prince.app`,
-or share it: `zip -r -y prince-macos.zip build-macos/prince.app`.
+This downloads and caches the official universal SDL2 / SDL2_image frameworks, builds a
+**universal binary** (arm64 + x86_64), and bundles the frameworks inside
+`build-macos/prince.app` so it is fully self-contained (no Homebrew/MacPorts needed to
+run it). Share it with `zip -r -y prince-macos.zip build-macos/prince.app`.
 
-Compatibility of the produced app:
-
-| Architecture      | Runs on                                          |
-| ----------------- | ------------------------------------------------ |
-| Intel (x86_64)    | macOS 10.13 High Sierra and later                |
-| Apple Silicon     | macOS 11 Big Sur and later (incl. macOS 26)      |
-
-You only need the Xcode command line tools (`xcode-select --install`). The script
-downloads and caches the frameworks; run `./build-macos.sh distclean` to reset.
-Useful overrides: `SDL2_VERSION`, `SDL2_IMAGE_VERSION`, `MACOS_MIN_X86_64`
-(default `10.13`), `MACOS_MIN_ARM64` (default `11.0`), `CODESIGN_IDENTITY`
-(default `-`, i.e. ad-hoc). To sign for distribution, e.g.:
+Overrides: `SDL2_VERSION`, `SDL2_IMAGE_VERSION`, `MACOS_MIN_X86_64` (default `10.13`),
+`MACOS_MIN_ARM64` (default `11.0`), `CODESIGN_IDENTITY` (default `-`, ad-hoc). For a
+signed, distributable build:
 
     CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./build-macos.sh
 
-#### Alternative: build against a system-installed SDL2
+#### On High Sierra (macOS 10.13) and other old Intel Macs
 
-Install SDL2 + SDL2_image and the developer tools, then build a plain binary linked
-against them. Such a build matches your Mac's own architecture and macOS version — it
-is not universal and not portable to older systems.
-
-With Homebrew:
-
-    brew install sdl2 sdl2_image pkg-config
-
-With MacPorts (from https://www.macports.org/):
+Install SDL2 from **MacPorts** (https://www.macports.org/):
 
     sudo port install libsdl2 libsdl2_image pkgconfig
 
-Install the tools (`xcode-select --install`), then in the `src` directory run `make`.
+Then build. Any of these work — they all link against the MacPorts SDL2, not the framework:
+
+    make                     # in the src/ directory — simplest, produces ./prince
+    ./build-macos.sh         # auto-detects macOS 10.x and uses pkg-config; makes a .app
+    ./build-macos.sh --macports --bundle-libs   # self-contained .app (needs `port install dylibbundler`)
+
+Homebrew works too (`brew install sdl2 sdl2_image pkg-config`); `build-macos.sh` prefers
+MacPorts (`/opt/local`) when both are present. Force the local build anywhere with
+`./build-macos.sh --pkgconfig`.
 
 #### Building via CMake
 
-CMake can also produce the universal, self-contained bundle. Point it at a directory
-holding `SDL2.framework` and `SDL2_image.framework` (running `./build-macos.sh` once
-caches them under `build-macos/Frameworks`):
+Plain build against a locally-installed SDL2 (found via pkg-config — MacPorts or Homebrew):
 
-    cmake -DCREATE_BUNDLE=1 -DMACOS_UNIVERSAL=1 \
-          -DSDL2_FRAMEWORKS_DIR="$PWD/build-macos/Frameworks" src
-    cmake --build build   # or run cmake from a build dir of your choosing
+    cmake -S src -B build && cmake --build build
+
+Universal, self-contained bundle (macOS 11+). Point it at a directory holding
+`SDL2.framework` and `SDL2_image.framework` — running `./build-macos.sh` once caches
+them under `build-macos/Frameworks`:
+
+    cmake -S src -B build -DCREATE_BUNDLE=1 -DMACOS_UNIVERSAL=1 \
+          -DSDL2_FRAMEWORKS_DIR="$PWD/build-macos/Frameworks"
+    cmake --build build
 
 The deployment target defaults to macOS 10.13 (override with
 `-DCMAKE_OSX_DEPLOYMENT_TARGET=...`).
 
 #### Start the game
 
-Tested on OSX 10.9.5, OSX 10.11.2, macOS 10.13, 10.14, and — with the universal
-build — Apple Silicon through macOS 26.
+Tested on OSX 10.9.5, OSX 10.11.2, macOS 10.13 (High Sierra, MacPorts) and 10.14, and —
+with the universal build — Apple Silicon through macOS 26.
 
 1. In the project root directory, type `./prince` or `./prince full` (or double-click
    `prince.app`).
