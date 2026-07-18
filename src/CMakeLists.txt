@@ -1,4 +1,14 @@
-cmake_minimum_required(VERSION 2.8)
+# The range form keeps this configurable on old CMake while remaining compatible
+# with CMake 4.x, which refuses a minimum below 3.5.
+cmake_minimum_required(VERSION 3.5...3.28)
+
+# macOS: by default target High Sierra (10.13), the oldest macOS we support on
+# Intel, so the binary also runs on older Macs. Must be set before project().
+# (Ignored on non-Apple platforms.) Override with -DCMAKE_OSX_DEPLOYMENT_TARGET=...
+if (NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS deployment version")
+endif()
+
 project(SDLPoP)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -std=c99")
@@ -7,6 +17,39 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=implicit-function-declaration")
 
 # have CMake output binaries to the directory that contains the source files
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${SDLPoP_SOURCE_DIR}/..")
+
+# ---------------------------------------------------------------------------
+# macOS: universal (Apple Silicon + Intel) and self-contained bundle support
+# ---------------------------------------------------------------------------
+if (APPLE)
+    # strcasecmp()/strncasecmp() are declared in <strings.h>, which Darwin's
+    # <string.h> only pulls in when a BSD/Darwin feature level is requested.
+    # Needed so the code compiles cleanly under -std=c99 with
+    # -Werror=implicit-function-declaration (set above).
+    add_definitions(-D_DARWIN_C_SOURCE)
+
+    # Build a universal x86_64 + arm64 binary:  cmake -DMACOS_UNIVERSAL=1 ...
+    option(MACOS_UNIVERSAL "Build a universal x86_64 + arm64 binary" OFF)
+    if (MACOS_UNIVERSAL AND NOT CMAKE_OSX_ARCHITECTURES)
+        set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Target architectures" FORCE)
+    endif()
+
+    # Point this at a directory containing SDL2.framework and SDL2_image.framework
+    # (the official universal frameworks from libsdl.org) to link against and embed
+    # them, producing a fully self-contained .app that needs no installed SDL2:
+    #   cmake -DCREATE_BUNDLE=1 -DSDL2_FRAMEWORKS_DIR=/path/to/Frameworks ...
+    # build-macos.sh downloads and caches them under build-macos/Frameworks.
+    if (DEFINED SDL2_FRAMEWORKS_DIR)
+        set(USE_SDL_FRAMEWORKS ON)
+        # The source includes <SDL2/SDL_image.h>; in framework form that header is
+        # <SDL2_image/SDL_image.h>. A one-line forwarding header bridges the two.
+        set(SDL_SHIM_DIR "${CMAKE_BINARY_DIR}/sdl_shim")
+        file(MAKE_DIRECTORY "${SDL_SHIM_DIR}/SDL2")
+        file(WRITE "${SDL_SHIM_DIR}/SDL2/SDL_image.h" "#include <SDL2_image/SDL_image.h>\n")
+        include_directories("${SDL_SHIM_DIR}")
+        add_compile_options("-F${SDL2_FRAMEWORKS_DIR}")
+    endif()
+endif()
 
 # SDLPoP requires the SDL2 and SDL2_image development libraries.
 # You can pass the SDL2 location to CMake like so: -DSDL2="C:/work/libraries/SDL2-2.0.8"
@@ -90,8 +133,11 @@ else()
     # By default, a normal binary executable will be created.
     # If you want an Application Bundle instead, pass CREATE_BUNDLE to CMake like so: -DCREATE_BUNDLE=1
 
-    # NOTE: Currently, the SDL2 and SDL2_image frameworks are not being correctly included/linked in the bundle!
-    #       As long as this isn't fixed, these bundles will only work if SDL2 and SDL2_image are installed.
+    # NOTE: Pass -DSDL2_FRAMEWORKS_DIR=/path/to/Frameworks (a directory containing
+    #       SDL2.framework and SDL2_image.framework) to embed them in the bundle and make
+    #       the .app self-contained. Without it the bundle only runs where SDL2 and
+    #       SDL2_image are already installed. The build-macos.sh helper does the whole
+    #       thing (download frameworks + universal build + self-contained bundle) for you.
 
     set (SDLPoP_VERSION "1.24 RC")
     set (MACOSX_BUNDLE_INFO_STRING          ${PROJECT_NAME})
@@ -113,12 +159,41 @@ else()
     add_custom_command(TARGET prince POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy
             ${CMAKE_SOURCE_DIR}/../SDLPoP.ini ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/prince.app/Contents/MacOS/SDLPoP.ini)
+
+    if (USE_SDL_FRAMEWORKS)
+        # Embed the frameworks so the .app is self-contained, then (ad-hoc) re-sign.
+        # cp -R preserves the frameworks' internal Versions/Current symlinks, which
+        # codesign requires; sign inside-out (frameworks first, then the whole app).
+        add_custom_command(TARGET prince POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/prince.app/Contents/Frameworks
+                COMMAND cp -R ${SDL2_FRAMEWORKS_DIR}/SDL2.framework
+                    ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/prince.app/Contents/Frameworks/
+                COMMAND cp -R ${SDL2_FRAMEWORKS_DIR}/SDL2_image.framework
+                    ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/prince.app/Contents/Frameworks/
+                COMMAND codesign --force --sign - --timestamp=none
+                    ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/prince.app/Contents/Frameworks/SDL2.framework
+                COMMAND codesign --force --sign - --timestamp=none
+                    ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/prince.app/Contents/Frameworks/SDL2_image.framework
+                COMMAND codesign --force --deep --sign - --timestamp=none
+                    ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/prince.app)
+    endif()
 endif()
 
 if(WIN32)
     target_link_libraries(prince mingw32 SDL2main SDL2 SDL2_image)
 elseif(APPLE)
-    target_link_libraries(prince SDL2main SDL2 SDL2_image m)
+    if (USE_SDL_FRAMEWORKS)
+        # Link against the frameworks (which already have @rpath install names) and
+        # teach the binary to find them both inside a bundle and in place.
+        target_link_libraries(prince
+                "-F${SDL2_FRAMEWORKS_DIR}" "-framework SDL2" "-framework SDL2_image" m)
+        set_target_properties(prince PROPERTIES
+                INSTALL_RPATH "@executable_path/../Frameworks;${SDL2_FRAMEWORKS_DIR}"
+                BUILD_WITH_INSTALL_RPATH ON)
+    else()
+        target_link_libraries(prince SDL2main SDL2 SDL2_image m)
+    endif()
 elseif(PSP) # Linux, *BSD, etc.
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")
 	include(FindPkgConfig)

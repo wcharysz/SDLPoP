@@ -488,27 +488,67 @@ Remove it with:
 
 ### macOS
 
-#### Install SDL2 + SDL2 image
+#### Recommended: a universal, self-contained app (`build-macos.sh`)
 
-##### With Homebrew
+This is the easiest way to get a `prince.app` that runs everywhere. It produces a
+**universal binary** (Apple Silicon *and* Intel) with the official SDL2 / SDL2_image
+frameworks bundled inside the `.app`, so nothing else needs to be installed on the
+machine that runs it — no Homebrew, no MacPorts.
+
+    ./build-macos.sh
+
+The result is `build-macos/prince.app`. Open it with `open build-macos/prince.app`,
+or share it: `zip -r -y prince-macos.zip build-macos/prince.app`.
+
+Compatibility of the produced app:
+
+| Architecture      | Runs on                                          |
+| ----------------- | ------------------------------------------------ |
+| Intel (x86_64)    | macOS 10.13 High Sierra and later                |
+| Apple Silicon     | macOS 11 Big Sur and later (incl. macOS 26)      |
+
+You only need the Xcode command line tools (`xcode-select --install`). The script
+downloads and caches the frameworks; run `./build-macos.sh distclean` to reset.
+Useful overrides: `SDL2_VERSION`, `SDL2_IMAGE_VERSION`, `MACOS_MIN_X86_64`
+(default `10.13`), `MACOS_MIN_ARM64` (default `11.0`), `CODESIGN_IDENTITY`
+(default `-`, i.e. ad-hoc). To sign for distribution, e.g.:
+
+    CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./build-macos.sh
+
+#### Alternative: build against a system-installed SDL2
+
+Install SDL2 + SDL2_image and the developer tools, then build a plain binary linked
+against them. Such a build matches your Mac's own architecture and macOS version — it
+is not universal and not portable to older systems.
+
+With Homebrew:
 
     brew install sdl2 sdl2_image pkg-config
 
-##### With Port
-
-Install "port" from https://www.macports.org/, then:
+With MacPorts (from https://www.macports.org/):
 
     sudo port install libsdl2 libsdl2_image pkgconfig
 
-#### Install development tools
+Install the tools (`xcode-select --install`), then in the `src` directory run `make`.
 
-1. Install Xcode.
-2. Install the "command line developer tools" by typing `xcode-select --install` at the prompt.
-3. Using terminal, in the '/src' directory of SDLPoP, type: `make`
+#### Building via CMake
+
+CMake can also produce the universal, self-contained bundle. Point it at a directory
+holding `SDL2.framework` and `SDL2_image.framework` (running `./build-macos.sh` once
+caches them under `build-macos/Frameworks`):
+
+    cmake -DCREATE_BUNDLE=1 -DMACOS_UNIVERSAL=1 \
+          -DSDL2_FRAMEWORKS_DIR="$PWD/build-macos/Frameworks" src
+    cmake --build build   # or run cmake from a build dir of your choosing
+
+The deployment target defaults to macOS 10.13 (override with
+`-DCMAKE_OSX_DEPLOYMENT_TARGET=...`).
 
 #### Start the game
 
-Tested on OSX 10.9.5, OSX 10.11.2, macOS 10.13 and 10.14.
+Tested on OSX 10.9.5, OSX 10.11.2, macOS 10.13, 10.14, and — with the universal
+build — Apple Silicon through macOS 26.
 
-1. In the project root directory. Type `./prince` or `./prince full`.
+1. In the project root directory, type `./prince` or `./prince full` (or double-click
+   `prince.app`).
 2. Hit Ctrl+Q to quit.
